@@ -14,6 +14,10 @@ class SearchMemoriesInput(BaseModel):
     category: str | None = None
 
 
+class DeleteMemoryInput(BaseModel):
+    memory_id: int
+
+
 class CreateTaskInput(BaseModel):
     title: str = Field(min_length=1)
     description: str | None = None

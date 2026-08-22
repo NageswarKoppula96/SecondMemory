@@ -6,17 +6,19 @@ from sqlalchemy.orm import Session
 from app.ai.schemas import (
     CreateReminderInput,
     CreateTaskInput,
+    DeleteMemoryInput,
     SaveMemoryInput,
     SearchMemoriesInput,
 )
-from app.memory.service import MemoryService
-from app.reminders.service import ReminderService
+from app.memory.service import MemoryNotFoundError, MemoryService
+from app.reminders.service import ReminderNotFoundError, ReminderService
 from app.tasks.service import TaskService
 
 
 def build_tools(
     session: Session,
     schedule_reminder=None,
+    cancel_reminder_schedule=None,
 ) -> list[StructuredTool]:
     memories = MemoryService(session)
     tasks = TaskService(session)
@@ -53,6 +55,13 @@ def build_tools(
 
     def list_memories() -> str:
         return search_memories()
+
+    def delete_memory(memory_id: int) -> str:
+        try:
+            memories.delete(memory_id)
+        except MemoryNotFoundError:
+            return f"Memory {memory_id} was not found."
+        return f"Memory {memory_id} deleted."
 
     def create_task(
         title: str,
@@ -117,8 +126,13 @@ def build_tools(
         )
 
     def cancel_reminder(reminder_id: int) -> str:
-        reminders.cancel(reminder_id)
-        return "Reminder cancelled."
+        try:
+            reminders.cancel(reminder_id)
+        except ReminderNotFoundError:
+            return f"Reminder {reminder_id} was not found."
+        if cancel_reminder_schedule:
+            cancel_reminder_schedule(reminder_id)
+        return f"Reminder {reminder_id} cancelled."
 
     return [
         StructuredTool.from_function(
@@ -147,6 +161,16 @@ def build_tools(
                 "List all of the user's saved memories. "
                 "Use this when the user asks to show or list memories."
             ),
+        ),
+        StructuredTool.from_function(
+            delete_memory,
+            name="delete_memory",
+            description=(
+                "Delete a saved memory when the user explicitly asks to "
+                "forget, remove, or delete it. Never use this tool unless "
+                "the user explicitly requests deletion."
+            ),
+            args_schema=DeleteMemoryInput,
         ),
         StructuredTool.from_function(
             create_task,
@@ -194,6 +218,10 @@ def build_tools(
         StructuredTool.from_function(
             cancel_reminder,
             name="cancel_reminder",
-            description="Cancel an active future reminder.",
+            description=(
+                "Cancel a future reminder when the user explicitly asks to "
+                "cancel, remove, delete, or stop the reminder. Do not cancel "
+                "reminders unless the user explicitly requests it."
+            ),
         ),
     ]

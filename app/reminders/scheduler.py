@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
+from apscheduler.jobstores.base import JobLookupError
 from sqlalchemy.orm import sessionmaker
 
 from app.database.models import Reminder
@@ -47,6 +48,12 @@ class ReminderScheduler:
     def shutdown(self) -> None:
         if self.scheduler.running:
             self.scheduler.shutdown(wait=False)
+
+    def cancel(self, reminder_id: int) -> None:
+        try:
+            self.scheduler.remove_job(f"reminder-{reminder_id}")
+        except JobLookupError:
+            logger.debug("Reminder %s was not scheduled", reminder_id)
 
     def _trigger(self, reminder_id: int) -> None:
         with self.session_factory() as session:

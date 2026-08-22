@@ -6,6 +6,13 @@ logger = logging.getLogger(__name__)
 
 
 class AssistantAgent:
+    """
+    Provider-independent LangChain agent.
+
+    The LLM provider, model, and API key are supplied through Settings.
+    The agent itself does not contain provider-specific model classes.
+    """
+
     def __init__(self, settings: Settings):
         self.settings = settings
         self._agent = None
@@ -14,18 +21,38 @@ class AssistantAgent:
         if self._agent is not None:
             return self._agent
 
-        if (
-            self.settings.llm_provider not in {"gemini", "google-gemini"}
-            or not self.settings.llm_api_key
-        ):
-            return None
+        if not self.settings.llm_provider:
+            raise RuntimeError("LLM_PROVIDER is not configured")
+
+        if not self.settings.llm_api_key:
+            raise RuntimeError("LLM_API_KEY is not configured")
 
         from langchain.agents import create_agent
-        from langchain_google_genai import ChatGoogleGenerativeAI
+        from langchain.chat_models import init_chat_model
 
-        llm = ChatGoogleGenerativeAI(
-            google_api_key=self.settings.llm_api_key,
-            model=self.settings.llm_model,
+        provider = self._normalize_provider(
+            self.settings.llm_provider
+        )
+
+        model_name = self.settings.llm_model
+
+        if not model_name:
+            raise RuntimeError("LLM_MODEL is not configured")
+
+        logger.info(
+            "Initializing LLM provider=%s model=%s",
+            provider,
+            model_name,
+        )
+
+        self._configure_provider_api_key(
+            provider,
+            self.settings.llm_api_key,
+        )
+
+        llm = init_chat_model(
+            model=model_name,
+            model_provider=provider,
             temperature=0,
         )
 
@@ -35,21 +62,93 @@ class AssistantAgent:
             system_prompt=(
                 "You are a concise personal assistant. "
                 "Keep memories, tasks, and reminders separate. "
-                "Use tools for every data operation."
+                "Use tools for every data operation. "
+                "When the user asks to save information, use the "
+                "memory tools. When the user asks about saved "
+                "information, search the memory tools. "
+                "When the user asks to create or manage a task, "
+                "use the task tools. "
+                "When the user asks to create, list, or cancel a "
+                "reminder, use the reminder tools."
             ),
         )
 
         return self._agent
 
     @staticmethod
+    def _normalize_provider(provider: str) -> str:
+        """
+        Normalize common provider aliases to LangChain provider names.
+        """
+
+        normalized = provider.strip().lower()
+
+        aliases = {
+            "gemini": "google_genai",
+            "google": "google_genai",
+            "google-gemini": "google_genai",
+            "google_genai": "google_genai",
+            "openai": "openai",
+            "anthropic": "anthropic",
+            "claude": "anthropic",
+            "openrouter": "openrouter",
+            "groq": "groq",
+            "mistral": "mistralai",
+            "mistralai": "mistralai",
+            "cohere": "cohere",
+            "xai": "xai",
+            "deepseek": "deepseek",
+        }
+
+        return aliases.get(normalized, normalized)
+
+    @staticmethod
+    def _configure_provider_api_key(
+        provider: str,
+        api_key: str,
+    ) -> None:
+        """
+        Configure the provider-specific environment variable expected
+        by the corresponding LangChain integration.
+
+        The application exposes only one generic LLM_API_KEY setting.
+        """
+
+        import os
+
+        key_mapping = {
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "google_genai": "GOOGLE_API_KEY",
+            "groq": "GROQ_API_KEY",
+            "openrouter": "OPENROUTER_API_KEY",
+            "mistralai": "MISTRAL_API_KEY",
+            "cohere": "COHERE_API_KEY",
+            "xai": "XAI_API_KEY",
+            "deepseek": "DEEPSEEK_API_KEY",
+        }
+
+        environment_variable = key_mapping.get(provider)
+
+        if environment_variable:
+            os.environ[environment_variable] = api_key
+            return
+
+        logger.warning(
+            "No standard API-key environment mapping is configured "
+            "for provider '%s'. The provider integration may require "
+            "additional configuration.",
+            provider,
+        )
+
+    @staticmethod
     def _extract_text(content) -> str:
         """
-        Extract user-facing text from a LangChain/Gemini message content.
+        Extract user-facing text from LangChain/Gemini/provider
+        structured message content.
 
-        Gemini can return content as either a plain string or a list
-        of structured content blocks. Only the actual text should be
-        returned to the user. Provider-specific metadata such as
-        signatures must never be exposed.
+        Provider-specific metadata such as signatures must never
+        be exposed to the Telegram user.
         """
 
         if isinstance(content, str):
@@ -75,9 +174,6 @@ class AssistantAgent:
 
     def invoke(self, text: str, tools) -> str:
         agent = self._build(tools)
-
-        if agent is None:
-            raise RuntimeError("LLM is not configured")
 
         result = agent.invoke(
             {

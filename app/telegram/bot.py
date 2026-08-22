@@ -18,6 +18,7 @@ def build_application(settings: Settings) -> tuple[Application, ReminderSchedule
     scheduler = ReminderScheduler(factory, application.bot, settings.telegram_allowed_user_id or 0, settings.timezone)
     application.bot_data["settings"] = settings
     application.bot_data["schedule_reminder"] = scheduler.schedule
+    application.bot_data["cancel_reminder_schedule"] = scheduler.cancel
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("memories", memories))

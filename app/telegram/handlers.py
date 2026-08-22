@@ -188,6 +188,7 @@ async def message(
             tools = build_tools(
                 session,
                 context.bot_data.get("schedule_reminder"),
+                context.bot_data.get("cancel_reminder_schedule"),
             )
 
             response = AssistantAgent(settings).invoke(
