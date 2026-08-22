@@ -1,4 +1,6 @@
+from datetime import datetime
 import logging
+from zoneinfo import ZoneInfo
 
 from app.config.settings import Settings
 
@@ -175,12 +177,22 @@ class AssistantAgent:
     def invoke(self, text: str, tools) -> str:
         agent = self._build(tools)
 
+        user_timezone = ZoneInfo("Asia/Kolkata")
+        now = datetime.now(user_timezone)
+
+        contextual_text = f"""
+            Current date and time: {now.strftime("%Y-%m-%d %H:%M:%S")}
+            Timezone: Asia/Kolkata
+
+            User request:
+                {text}"""
+
         result = agent.invoke(
             {
                 "messages": [
                     {
                         "role": "user",
-                        "content": text,
+                        "content": contextual_text,
                     }
                 ]
             }
