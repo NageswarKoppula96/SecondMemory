@@ -7,6 +7,13 @@ from app.ai.agent import AssistantAgent
 from app.ai.tools import build_tools
 from app.config.settings import Settings
 from app.database.database import build_session_factory
+from app.telegram.keyboards import (
+    CHAT_BUTTON,
+    MEMORIES_BUTTON,
+    REMINDERS_BUTTON,
+    TASKS_BUTTON,
+    main_menu_keyboard,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +70,8 @@ async def start(
 
     await update.message.reply_text(
         "Welcome to SecondMemory. "
-        "Tell me what to remember, do, or remind you about."
+        "Tell me what to remember, do, or remind you about.",
+        reply_markup=main_menu_keyboard(),
     )
 
 
@@ -89,6 +97,7 @@ async def direct_list(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     kind: str,
+    heading: str | None = None,
 ) -> None:
     """
     Handle direct list commands such as memories, tasks, and reminders.
@@ -98,43 +107,76 @@ async def direct_list(
     if not authorized(update, settings):
         return
 
-    with session_factory(settings)() as session:
-        if kind == "memories":
-            from app.memory.service import MemoryService
+    try:
+        with session_factory(settings)() as session:
+            if kind == "memories":
+                from app.memory.service import MemoryService
 
-            text = (
-                "\n".join(
-                    f"{memory.id}. {memory.content}"
-                    for memory in MemoryService(session).search()
+                text = (
+                    "\n".join(
+                        f"{memory.id}. {memory.content}"
+                        for memory in MemoryService(session).search()
+                    )
+                    or "No memories found."
                 )
-                or "No memories found."
-            )
 
-        elif kind == "tasks":
-            from app.tasks.service import TaskService
+            elif kind == "tasks":
+                from app.tasks.service import TaskService
 
-            text = (
-                "\n".join(
-                    f"{task.id}. [{task.status}] {task.title}"
-                    for task in TaskService(session).list()
+                text = (
+                    "\n".join(
+                        f"{task.id}. [{task.status}] {task.title}"
+                        for task in TaskService(session).list()
+                    )
+                    or "No tasks found."
                 )
-                or "No tasks found."
-            )
 
-        else:
-            from app.reminders.service import ReminderService
+            else:
+                from app.reminders.service import ReminderService
 
-            text = (
-                "\n".join(
-                    f"{item.id}. "
-                    f"{item.remind_at:%Y-%m-%d %H:%M} "
-                    f"{item.message}"
-                    for item in ReminderService(session).list_upcoming()
+                text = (
+                    "\n".join(
+                        f"{item.id}. "
+                        f"{item.remind_at:%Y-%m-%d %H:%M} "
+                        f"{item.message}"
+                        for item in ReminderService(session).list_upcoming()
+                    )
+                    or "No upcoming reminders."
                 )
-                or "No upcoming reminders."
-            )
+    except Exception:
+        logger.exception("Failed to retrieve %s", kind)
+        await update.message.reply_text(
+            f"❌ I couldn't retrieve your {kind} right now. Please try again.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
 
-    await update.message.reply_text(text)
+    if heading:
+        text = f"{heading}\n\n{text}"
+    await update.message.reply_text(text, reply_markup=main_menu_keyboard())
+
+
+async def menu_memories(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await direct_list(update, context, "memories", "🧠 Your Memories")
+
+
+async def menu_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await direct_list(update, context, "tasks", "✅ Your Tasks")
+
+
+async def menu_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await direct_list(update, context, "reminders", "⏰ Upcoming Reminders")
+
+
+async def menu_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.bot_data["settings"]
+    if not authorized(update, settings):
+        return
+    await update.message.reply_text(
+        "🤖 Chat mode enabled.\n\n"
+        "You can ask me anything or tell me to create memories, tasks, or reminders.",
+        reply_markup=main_menu_keyboard(),
+    )
 
 
 async def memories(
@@ -181,6 +223,17 @@ async def message(
         or not update.message
         or not update.message.text
     ):
+        return
+
+    menu_handlers = {
+        MEMORIES_BUTTON: menu_memories,
+        TASKS_BUTTON: menu_tasks,
+        REMINDERS_BUTTON: menu_reminders,
+        CHAT_BUTTON: menu_chat,
+    }
+    menu_handler = menu_handlers.get(update.message.text)
+    if menu_handler:
+        await menu_handler(update, context)
         return
 
     try:
